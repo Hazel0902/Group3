@@ -1,5 +1,5 @@
 <?php
-require '../db.php';
+require '../db.php'; 
 
 // Check GET params
 $product_id = $_GET['id'] ?? null;
@@ -31,9 +31,11 @@ if (!$product) {
 // Handle Stock-In POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $qty = (int)($_POST['quantity'] ?? 0);
+
     if ($qty <= 0) {
         $error = "Quantity must be greater than zero.";
     } else {
+
         // Update product_locations quantity
         $stmt = $pdo->prepare("
             INSERT INTO product_locations (product_id, location_id, quantity)
@@ -42,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ");
         $stmt->execute([$product_id, $product['warehouse_id'], $qty]);
 
-        // FIXED: Update total_quantity in products table
+        // Update total_quantity in products table
         $stmt = $pdo->prepare("
             UPDATE products 
             SET total_quantity = total_quantity + ?
@@ -50,74 +52,104 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ");
         $stmt->execute([$qty, $product_id]);
 
-        // Add to Module1/stock_in.php after successful stock-in
-        // Inside the else block after successful stock-in
+        /* -----------------------------------------------------------
+           MODULE 4 (SCM) INTEGRATION - Create Inbound Shipment Record
+        ------------------------------------------------------------ */
 
-        // Prepare data for Finance module
+        $scm_payload = [
+            'external_ref' => 'M1-STOCKIN-' . time(),
+            'supplier_id'  => null, 
+            'type'         => 'inbound',
+            'status'       => 'delivered',
+            'origin'       => 'Module 1 Inventory',
+            'destination'  => $product['warehouse_name'],
+            'departure_at' => date('Y-m-d H:i:s'),
+            'expected_arrival_at' => date('Y-m-d H:i:s'),
+            'items' => [
+                [
+                    'product_id'   => $product_id,
+                    'product_name' => $product['name'],
+                    'quantity'     => $qty
+                ]
+            ]
+        ];
+
+        $ch = curl_init("http://localhost/Module4/api/create_shipment.php");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($scm_payload));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        $scm_response = curl_exec($ch);
+        curl_close($ch);
+
+        // Log SCM response
+        error_log("SCM Response: " . $scm_response);
+
+        /* ------------------------------------------
+           MODULE 5 FINANCE INTEGRATION
+        ------------------------------------------ */
+
         $finance_data = [
             'product_id' => $product_id,
             'quantity' => $qty,
             'transaction_type' => 'IN',
             'transaction_date' => date('Y-m-d H:i:s'),
             'warehouse_id' => $product['warehouse_id'],
-            'reference_id' => null, // Could be populated with goods receipt ID if available
+            'reference_id' => null,
             'reference_type' => null
         ];
 
-        // Send to Finance module API
         $ch = curl_init('http://your-domain.com/Module5/api_stock_transaction.php');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($finance_data));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Content-Type: application/json'
-        ]);
-
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
         $response = curl_exec($ch);
         $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        // Log response for debugging
         error_log("Finance API Response: $response (HTTP $http_code)");
 
         echo "<script>
-        alert('Stock-in successful!');
-        window.location.href = 'index.php';
-      </script>";
+            alert('Stock-in successful!');
+            window.location.href = 'index.php';
+        </script>";
         exit;
     }
 }
 ?>
 <!doctype html>
 <html>
-
 <head>
     <meta charset="utf-8">
     <title>Stock-In: <?php echo htmlspecialchars($product['name']); ?></title>
     <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
-    <div class="container">
-        <h1>Stock-In Product</h1>
-        <p><strong>Product:</strong> <?php echo htmlspecialchars($product['sku'] . ' - ' . $product['name']); ?></p>
-        <p><strong>Warehouse:</strong> <?php echo htmlspecialchars($product['warehouse_name']); ?></p>
-        <p><strong>Current Quantity:</strong> <?php echo (int)$product['current_qty']; ?></p>
+<div class="container">
+    <h1>Stock-In Product</h1>
 
-        <?php if (isset($error)): ?>
-            <p style="color:red;"><?php echo htmlspecialchars($error); ?></p>
-        <?php endif; ?>
+    <p><strong>Product:</strong> 
+        <?php echo htmlspecialchars($product['sku'] . ' - ' . $product['name']); ?>
+    </p>
 
-        <form method="post">
-            <label>
-                Quantity to Add:
-                <input type="number" name="quantity" value="0" min="1" required>
-            </label>
-            <br><br>
-            <button class="btn btn-primary" type="submit">Stock In</button>
-            <a class="btn" href="index.php">Cancel</a>
-        </form>
-    </div>
+    <p><strong>Warehouse:</strong> <?php echo htmlspecialchars($product['warehouse_name']); ?></p>
+    <p><strong>Current Quantity:</strong> <?php echo (int)$product['current_qty']; ?></p>
+
+    <?php if (isset($error)): ?>
+        <p style="color:red;"><?php echo htmlspecialchars($error); ?></p>
+    <?php endif; ?>
+
+    <form method="post">
+        <label>
+            Quantity to Add:
+            <input type="number" name="quantity" value="0" min="1" required>
+        </label>
+        <br><br>
+        <button class="btn btn-primary" type="submit">Stock In</button>
+        <a class="btn" href="index.php">Cancel</a>
+    </form>
+</div>
 </body>
-
 </html>
+
