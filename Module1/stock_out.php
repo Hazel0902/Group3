@@ -62,6 +62,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Add to Module1/stock_out.php after successful stock-out
         // Inside the else block after successful stock-out
 
+        /* -----------------------------------------------------------
+           MODULE 4 (SCM) INTEGRATION - Create Outbound Shipment Record
+        ------------------------------------------------------------ */
+
+        $scm_payload = [
+            'external_ref' => 'M1-STOCKOUT-' . time(),
+            'supplier_id'  => null,
+            'type'         => 'outbound',
+            'status'       => 'pending',
+            'origin'       => $product['warehouse_name'],
+            'destination'  => 'Sales/Customer',
+            'departure_at' => date('Y-m-d H:i:s'),
+            'expected_arrival_at' => date('Y-m-d H:i:s'),
+            'items' => [
+                [
+                    'product_id'   => $product_id,
+                    'product_name' => $product['name'],
+                    'quantity'     => $qty
+                ]
+            ]
+        ];
+
+        $ch = curl_init("http://localhost/Module4/api/create_shipment.php");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($scm_payload));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json'
+        ]);
+
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        // Log response for debugging
+        error_log("SCM Response: " . $response);
+
         // Prepare data for Finance module
         $finance_data = [
             'product_id' => $product_id,
