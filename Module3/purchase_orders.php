@@ -72,6 +72,33 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
     }
 }
 
+// Fetch suppliers from Module 4 API
+$suppliers = [];
+try {
+    $ch = curl_init("http://localhost/Module4/api/get_suppliers.php");
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $supplier_response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($http_code === 200) {
+        $supplier_data = json_decode($supplier_response, true);
+        if ($supplier_data['status'] === 'ok') {
+            $suppliers = $supplier_data['data'];
+        } else {
+            error_log("Supplier API Error: " . ($supplier_data['message'] ?? 'Unknown error'));
+            // Fallback to local database if API fails
+            $suppliers = $pdo->query("SELECT * FROM suppliers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+        }
+    } else {
+        throw new Exception("HTTP Error: " . $http_code);
+    }
+} catch (Exception $e) {
+    error_log("Failed to fetch suppliers from Module 4: " . $e->getMessage());
+    // Fallback to local database
+    $suppliers = $pdo->query("SELECT * FROM suppliers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+}
+
 // Handle form submission for new purchase order
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $po_number = 'PO-' . date('Ymd') . '-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
@@ -148,88 +175,128 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['send', 'confirm', 'del
         $stmt->execute([$status_map[$_GET['action']], $_GET['id']]);
 
         if ($_GET['action'] === 'deliver') {
-    $po_id = $_GET['id'];
-    
-    $stmt = $pdo->prepare("SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.id = ?");
-    $stmt->execute([$po_id]);
-    $po = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    if (!$po) {
-        throw new Exception("Purchase order not found");
-    }
-    
-    $stmt = $pdo->prepare("
-        SELECT poi.id as po_item_id, poi.product_id, poi.quantity, p.warehouse_id as location_id
-        FROM purchase_order_items poi
-        JOIN products p ON poi.product_id = p.id
-        WHERE poi.po_id = ?
-    ");
-    $stmt->execute([$po_id]);
-    $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    if (empty($items)) {
-        throw new Exception("No items found in purchase order");
-    }
-    
-    // Use first location_id or fallback
-    $receipt_location = $items[0]['location_id'] ?? null;
-    
-    // Insert goods receipt
-    $receipt_number = 'GR-' . date('Ymd') . '-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
-    $stmt = $pdo->prepare("
-        INSERT INTO goods_receipts 
-        (receipt_number, po_id, receipt_date, received_by, location_id, notes)
-        VALUES (?, ?, NOW(), ?, ?, ?)
-    ");
-    $notes = "Auto-generated from PO: " . $po['po_number'] . " - Supplier: " . $po['supplier_name'];
-    
-    $stmt->execute([
-        $receipt_number,
-        $po_id,
-        $_SESSION['user_name'] ?? 'System',
-        $receipt_location,
-        $notes
-    ]);
-    
-    $gr_id = $pdo->lastInsertId();
-    
-    foreach ($items as $item) {
-        // Just print the items here for debugging
-        echo "Item: product_id={$item['product_id']}, quantity={$item['quantity']}, location_id={$item['location_id']}<br>";
-        
-        // Insert goods receipt items
-        $stmt = $pdo->prepare("
-            INSERT INTO goods_receipt_items (receipt_id, po_item_id, quantity_received, expiration_date)
-            VALUES (?, ?, ?, ?)
-        ");
-        $stmt->execute([$gr_id, $item['po_item_id'], $item['quantity'], null]);
-        
-        // Update product_locations quantity
-        $stmt = $pdo->prepare("
-            INSERT INTO product_locations (product_id, location_id, quantity)
-            VALUES (?, ?, ?)
-            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
-        ");
-        $stmt->execute([$item['product_id'], $item['location_id'], $item['quantity']]);
-        
-        // Insert stock transaction
-        $stmt = $pdo->prepare("
-            INSERT INTO stock_transactions 
-            (product_id, location_from, location_to, qty, type, reference, note, trans_date, user_name, reference_id, reference_type)
-            VALUES (?, NULL, ?, ?, 'stock-in', ?, ?, NOW(), ?, ?, 'gr')
-        ");
-        $stmt->execute([
-            $item['product_id'],
-            $item['location_id'],
-            $item['quantity'],
-            $receipt_number,
-            "Received from PO: " . $po['po_number'],
-            $_SESSION['user_name'] ?? 'System',
-            $gr_id
-        ]);
-    }
-}
+            $po_id = $_GET['id'];
+            
+            $stmt = $pdo->prepare("SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.id = ?");
+            $stmt->execute([$po_id]);
+            $po = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$po) {
+                throw new Exception("Purchase order not found");
+            }
+            
+            $stmt = $pdo->prepare("
+                SELECT poi.id as po_item_id, poi.product_id, poi.quantity, p.warehouse_id as location_id
+                FROM purchase_order_items poi
+                JOIN products p ON poi.product_id = p.id
+                WHERE poi.po_id = ?
+            ");
+            $stmt->execute([$po_id]);
+            $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            if (empty($items)) {
+                throw new Exception("No items found in purchase order");
+            }
+            
+            // Use first location_id or fallback
+            $receipt_location = $items[0]['location_id'] ?? null;
+            
+            // Insert goods receipt
+            $receipt_number = 'GR-' . date('Ymd') . '-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
+            $stmt = $pdo->prepare("
+                INSERT INTO goods_receipts 
+                (receipt_number, po_id, receipt_date, received_by, location_id, notes)
+                VALUES (?, ?, NOW(), ?, ?, ?)
+            ");
+            $notes = "Auto-generated from PO: " . $po['po_number'] . " - Supplier: " . $po['supplier_name'];
+            
+            $stmt->execute([
+                $receipt_number,
+                $po_id,
+                $_SESSION['user_name'] ?? 'System',
+                $receipt_location,
+                $notes
+            ]);
+            
+            $gr_id = $pdo->lastInsertId();
+            
+            foreach ($items as $item) {
+                // Insert goods receipt items
+                $stmt = $pdo->prepare("
+                    INSERT INTO goods_receipt_items (receipt_id, po_item_id, quantity_received, expiration_date)
+                    VALUES (?, ?, ?, ?)
+                ");
+                $stmt->execute([$gr_id, $item['po_item_id'], $item['quantity'], null]);
+                
+                // Update product_locations quantity
+                $stmt = $pdo->prepare("
+                    INSERT INTO product_locations (product_id, location_id, quantity)
+                    VALUES (?, ?, ?)
+                    ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
+                ");
+                $stmt->execute([$item['product_id'], $item['location_id'], $item['quantity']]);
+                
+                // Insert stock transaction
+                $stmt = $pdo->prepare("
+                    INSERT INTO stock_transactions 
+                    (product_id, location_from, location_to, qty, type, reference, note, trans_date, user_name, reference_id, reference_type)
+                    VALUES (?, NULL, ?, ?, 'stock-in', ?, ?, NOW(), ?, ?, 'gr')
+                ");
+                $stmt->execute([
+                    $item['product_id'],
+                    $item['location_id'],
+                    $item['quantity'],
+                    $receipt_number,
+                    "Received from PO: " . $po['po_number'],
+                    $_SESSION['user_name'] ?? 'System',
+                    $gr_id
+                ]);
+            }
 
+            /* -----------------------------------------------------------
+               MODULE 4 (SCM) INTEGRATION - Update Delivery Status
+            ------------------------------------------------------------ */
+            $scm_payload = [
+                'shipment_id' => $po_id,
+                'status' => 'delivered'
+            ];
+
+            $ch = curl_init("http://localhost/Module4/api/update_status.php");
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($scm_payload));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+            $scm_response = curl_exec($ch);
+            curl_close($ch);
+
+            // Log SCM response
+            error_log("SCM Status Update Response: " . $scm_response);
+        }
+
+        // For other status updates (send, confirm, cancel)
+        if (in_array($_GET['action'], ['send', 'confirm', 'cancel'])) {
+            $scm_status_map = [
+                'send' => 'in_transit',
+                'confirm' => 'pending',
+                'cancel' => 'cancelled'
+            ];
+
+            $scm_payload = [
+                'shipment_id' => $_GET['id'],
+                'status' => $scm_status_map[$_GET['action']]
+            ];
+
+            $ch = curl_init("http://localhost/Module4/api/update_status.php");
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($scm_payload));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+            $scm_response = curl_exec($ch);
+            curl_close($ch);
+
+            // Log SCM response
+            error_log("SCM Status Update Response: " . $scm_response);
+        }
 
         $pdo->commit();
         header("Location: purchase_orders.php?status=updated");
@@ -257,9 +324,6 @@ $purchase_orders = $pdo->query("
     LEFT JOIN purchase_requisitions pr ON po.requisition_id = pr.id
     ORDER BY po.created_at DESC
 ")->fetchAll(PDO::FETCH_ASSOC);
-
-// Load suppliers
-$suppliers = $pdo->query("SELECT * FROM suppliers ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 
 // Load approved requisitions
 $requisitions = $pdo->query("
@@ -617,7 +681,7 @@ $products = $pdo->query("SELECT * FROM products ORDER BY name")->fetchAll(PDO::F
                             <select class="input" name="supplier_id" required>
                                 <option value="">Select Supplier</option>
                                 <?php foreach ($suppliers as $supplier): ?>
-                                    <option value="<?php echo $supplier['id']; ?>"><?php echo htmlspecialchars($supplier['name']); ?></option>
+                                    <option value="<?php echo $supplier['supplier_id']; ?>"><?php echo htmlspecialchars($supplier['supplier_name']); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </label>
