@@ -31,7 +31,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($source_stock === false || $source_stock < $qty) {
             $pdo->rollBack();
-            // Show error page with stock info
             ?>
             <!doctype html>
             <html>
