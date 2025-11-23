@@ -1,23 +1,19 @@
 <?php
+// config.php
+return [
+    "db_host" => "localhost",
+    "db_user" => "root",
+    "db_pass" => "",
+    "db_name" => "module7_bi",
 
-$BASE_URL = 'http://localhost/Group3';
-$ENDPOINTS = [
-    'inventory'   => $BASE_URL . '/Module1/get_inventory.php',
-    'hr'          => $BASE_URL . '/Module2/get_hr.php',
-    'finance'     => $BASE_URL . '/Module3/get_finance.php',
-    'purchasing'  => $BASE_URL . '/Module4/get_purchasing.php',
-    'production'  => $BASE_URL . '/Module5/get_production.php',
-    'sales'       => $BASE_URL . '/Module8/get_sales.php',
-    'warehouse'   => $BASE_URL . '/Module9/get_warehouse.php',
-    'logistics'   => $BASE_URL . '/Module10/get_logistics.php'
+    // API endpoints (change to your real module endpoints)
+    "endpoints" => [
+        "m1"  => "http://localhost:3001/api/inventory",
+        "m2"  => "http://localhost:3002/api/module2",
+        "m3"  => "http://localhost:3003/api/module3",
+        "m4"  => "http://localhost:3004/api/module4",
+        "m5"  => "http://localhost:3005/api/module5",
+        "m8"  => "http://localhost:3008/api/sales",
+        "m9"  => "http://localhost:3009/api/module9",
+    ]
 ];
-
-$DB_CONFIG = [
-    'host' => 'localhost',
-    'username' => 'root',
-    'password' => '',      // set your DB password
-    'dbname' => 'group3'   // set your DB name (or create one)
-];
-
-$HTTP_TIMEOUT = 5;
-
